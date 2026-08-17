@@ -1,0 +1,6 @@
+node_modules/
+.omp/cache/
+.omp/state/
+.omp/logs/
+*.log
+.DS_Store

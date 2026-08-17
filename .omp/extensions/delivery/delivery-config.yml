@@ -1,0 +1,39 @@
+# Delivery Extension Configuration
+# 路径：项目级 .omp/extensions/delivery/delivery-config.yml
+#       用户级 ~/.omp/agent/extensions/delivery-config.yml
+# 项目级优先；两者都没有则用 types.ts 里的 DEFAULT_CONFIG。
+# 解析失败也不报错，回退默认值。
+
+# Judge 模型：provider/id（如 "anthropic/claude-sonnet-4-5"）或角色别名（如 "@slow"）。
+# 留空字符串 → fallback 到当前会话模型（ctx.models.current()）。
+# 建议用比会话模型更强的模型做 judge，以保证判定质量。
+judgeModel: ""
+
+# 验证用测试命令。agent 改完代码后会跑这个命令判断是否通过。
+# exit 0 = 通过；非 0 = 失败→continue；超时 = need_user。
+# 留空 → 跳过测试检查（不算失败，仅不走测试路径）。
+# 示例："npm test" / "cargo test" / "go test ./..."
+testCommand: ""
+
+# 测试超时秒数。超时后判 need_user（原因不明，交人类）。
+testTimeout: 120
+
+# 单次 judge 调用的输入 token 上限。
+# 超过则按"丢弃最老工具结果"策略截断，保留最近的证据。
+maxInputTokensPerJudge: 30000
+
+# 单会话累计 judge token 上限（经济预算）。
+# 超限后走确定性降级：测试过+无待办→放行；否则→need_user。不再调 LLM。
+maxJudgeTokensPerSession: 200000
+
+# 每个工具结果内容的截断长度（字符）。
+# 头 67% + 尾 33%，中间插 [...truncated...] 标记。
+contentTruncateLength: 2000
+
+# 连续 continue 时是否重新判定。
+# true = 每次都重调 judge LLM（判定更准，更费 token）。
+# false = 复用上次 verdict（省 token，可能漏判新进展）。
+reJudgeOnContinue: true
+
+# 总开关。false 则扩展完全不注册任何事件回调。
+enabled: true
