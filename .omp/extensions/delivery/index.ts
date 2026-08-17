@@ -175,7 +175,7 @@ export default function deliveryExtension(pi: ExtensionAPI): void {
       // 连续 continue 时，若配置 reJudgeOnContinue=false，直接复用上次判定省 token。
       // stop_hook_active=true 表示这是"被强制继续"的一轮（上次判定 continue 了）。
       if (event.stop_hook_active && !config.reJudgeOnContinue && st.lastVerdict) {
-        return mapVerdict(st.lastVerdict, ctx);
+        return mapVerdict(st.lastVerdict, ctx, pi);
       }
 
       // 提取本轮所有工具调用结果。
@@ -195,10 +195,11 @@ export default function deliveryExtension(pi: ExtensionAPI): void {
         const allDone = !todos.hasTodos || TodoCache.isAllDone(todos.phases);
         if (testRes.passed && allDone) return undefined;  // 测试过+无待办 → 放行
         if (ctx.hasUI) ctx.ui.notify("delivery: 预算耗尽，需要用户决策", "warning");
-        return {
-          continue: true,
-          additionalContext: formatVerdict("need_user", "预算耗尽，需要用户决策"),
-        };
+        pi.sendMessage(
+          { type: "text", text: formatVerdict("need_user", "预算耗尽，需要用户决策") },
+          { deliverAs: "nextTurn" },
+        );
+        return undefined;
       }
 
       // —— 跑测试 ——
@@ -226,10 +227,12 @@ export default function deliveryExtension(pi: ExtensionAPI): void {
           reason: "测试执行超时",
           issues: [{ type: "unfulfilled", detail: "test timeout" }],
         };
-        return {
-          continue: true,
-          additionalContext: formatVerdict("need_user", "测试执行超时，需要用户决策"),
-        };
+        if (ctx.hasUI) ctx.ui.notify("⚠ delivery: 测试执行超时，需要用户决策", "warning");
+        pi.sendMessage(
+          { type: "text", text: formatVerdict("need_user", "测试执行超时，需要用户决策") },
+          { deliverAs: "nextTurn" },
+        );
+        return undefined;
       }
 
       // —— 检查 todo ——
@@ -308,7 +311,7 @@ export default function deliveryExtension(pi: ExtensionAPI): void {
       // 记录真实 token 消耗到预算追踪器。
       budget.addUsage(sid, outcome.totalTokens);
       st.lastVerdict = outcome.result;
-      return mapVerdict(outcome.result, ctx);
+      return mapVerdict(outcome.result, ctx, pi);
     } catch (e) {
       // 最后一道防线：任何未预期异常 → fail-open，绝不崩会话。
       pi.logger.error(`delivery session_stop: ${String(e)}`);
@@ -391,9 +394,9 @@ function formatVerdict(decision: string, reason: string): string {
 function mapVerdict(
   result: JudgeResult,
   ctx: { hasUI: boolean; ui: { notify: (m: string, t?: string) => void } },
+  pi: ExtensionAPI,
 ): SessionStopEventResult | undefined {
   const verdict = formatVerdict(result.decision, result.reason);
-  // 把 issues 也拼进上下文，让 agent/用户看到具体问题。
   const issues =
     result.issues.length > 0
       ? "\nIssues:\n" +
@@ -402,15 +405,19 @@ function mapVerdict(
   const context = issues ? `${verdict}\n${issues}` : verdict;
   if (result.decision === "done") {
     if (ctx.hasUI) ctx.ui.notify("delivery: ✓ 任务判定完成", "info");
-    return { additionalContext: context };  // 不带 continue → 放行
+    return { additionalContext: context };
   }
   if (result.decision === "continue") {
     return { continue: true, additionalContext: context };
   }
-  // need_user
+  // need_user: 注入信息到下一轮，但让会话停下等用户。
   if (ctx.hasUI)
     ctx.ui.notify(`⚠ delivery 需要用户决策: ${result.reason}`, "warning");
-  return { continue: true, additionalContext: context };
+  pi.sendMessage(
+    { type: "text", text: context },
+    { deliverAs: "nextTurn" },
+  );
+  return undefined;
 }
 
 /**
